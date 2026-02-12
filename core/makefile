@@ -1,27 +1,41 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -I. -Ilib
+CFLAGS = -Wall -Wextra -std=c99 -I. -Ilib -Itests
 
 BIN_DIR = bin
 LIB_DIR = lib
 TEST_DIR = tests
 
-TEST_EXEC = $(BIN_DIR)/test_runner
+EXEC_TEST_QUEUE = $(BIN_DIR)/test_queue
+EXEC_TEST_FSM   = $(BIN_DIR)/test_fsm
+EXEC_APP        = $(BIN_DIR)/traffic_sim
 
-TEST_SRCS = $(TEST_DIR)/test_queue.c $(LIB_DIR)/traffic_queue.c
+SRC_QUEUE = $(LIB_DIR)/traffic_queue.c
+SRC_FSM   = traffic_fsm.c
+SRC_MAIN  = main_pc.c
 
-all: $(TEST_EXEC)
+all: $(EXEC_TEST_QUEUE) $(EXEC_TEST_FSM) $(EXEC_APP)
 
-$(TEST_EXEC): $(TEST_SRCS)
+$(EXEC_APP): $(SRC_MAIN) $(SRC_FSM) $(SRC_QUEUE)
 	@mkdir -p $(BIN_DIR)
 	$(CC) $(CFLAGS) -o $@ $^
 
-test: $(TEST_EXEC)
-	@./$(TEST_EXEC)
+$(EXEC_TEST_QUEUE): $(TEST_DIR)/test_queue.c $(SRC_QUEUE)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
 
-check_fsm:
-	$(CC) $(CFLAGS) -c traffic_fsm.c -o $(BIN_DIR)/traffic_fsm.o
+$(EXEC_TEST_FSM): $(TEST_DIR)/test_fsm.c $(SRC_FSM) $(SRC_QUEUE)
+	@mkdir -p $(BIN_DIR)
+	$(CC) $(CFLAGS) -o $@ $^
+
+test_queue: $(EXEC_TEST_QUEUE)
+	@./$(EXEC_TEST_QUEUE)
+
+test_fsm: $(EXEC_TEST_FSM)
+	@./$(EXEC_TEST_FSM)
+
+test: test_queue test_fsm
 
 clean:
 	rm -rf $(BIN_DIR)/*
 
-.PHONY: all test clean check_fsm
+.PHONY: all test test_queue test_fsm clean

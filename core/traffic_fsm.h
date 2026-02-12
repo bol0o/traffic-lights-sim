@@ -9,7 +9,7 @@
 #define LANES_PER_ROAD 2
 
 #define LANE_STRAIGHT_RIGHT 0
-#define LANE_LEFT           1
+#define LANE_LEFT 1
 
 typedef enum {
     STATE_INIT = 0,
@@ -29,7 +29,7 @@ typedef enum {
 typedef struct {
     TrafficState current_state;
     uint32_t current_step; // Global simulation timer
-    uint32_t state_timer; // Current time spent in particular state
+    uint32_t state_timer; // Current time spent in state
 
     // Structure: queues[ARRIVAL_DIRECTION][LANE]
     // Direction: 0=N, 1=E, 2=S, 3=W
