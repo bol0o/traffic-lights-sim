@@ -100,7 +100,7 @@ void test_peek() {
 }
 
 int main() {
-    printf("=== QUEUE TESTS ===\n\n");
+    printf("\n=== QUEUE TESTS ===\n\n");
 
     RUN_TEST(test_initialization);
     RUN_TEST(test_enqueue_dequeue_basic);

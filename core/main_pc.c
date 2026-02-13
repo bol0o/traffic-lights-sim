@@ -7,6 +7,8 @@
  * and the internal FSM. It listens on standard input for 
  * binary command frames, deserializes them, triggers the FSM logic, 
  * and serializes the responses back to standard output.
+ * 
+ * 11.02.26, Paweł Bolek
  */
 
 #include <stdio.h>
@@ -35,6 +37,7 @@ void handle_config() {
         .green_lt = payload.green_lt,
         .yellow = payload.yellow,
         .all_red = payload.all_red,
+        .red_yellow = 1,
         .ext_threshold = payload.ext_threshold,
         .max_ext = payload.max_ext,
         .skip_limit = payload.skip_limit
