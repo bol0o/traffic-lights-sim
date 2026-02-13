@@ -1,3 +1,14 @@
+/**
+ * @file main.c
+ * 
+ * @brief Hardware Abstraction Layer for traffic simulation.
+ * 
+ * * This module acts as the bridge between Python host
+ * and the internal FSM. It listens on standard input for 
+ * binary command frames, deserializes them, triggers the FSM logic, 
+ * and serializes the responses back to standard output.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,6 +18,9 @@
 
 TrafficSystem sys;
 
+/**
+ * @brief Handles CMD_CONFIG: Deserializes timing constraints and resets FSM.
+ */
 void handle_config() {
     PayloadConfig payload;
     size_t read_count = fread(&payload, sizeof(PayloadConfig), 1, stdin);
@@ -20,14 +34,21 @@ void handle_config() {
         .green_st = payload.green_st,
         .green_lt = payload.green_lt,
         .yellow = payload.yellow,
-        .all_red = payload.all_red
+        .all_red = payload.all_red,
+        .ext_threshold = payload.ext_threshold,
+        .max_ext = payload.max_ext,
+        .skip_limit = payload.skip_limit
     };
     
     traffic_init(&sys, config);
-    fprintf(stderr, "[C-OK] Config loaded: ST=%d, LT=%d, Y=%d, AR=%d\n",
-            config.green_st, config.green_lt, config.yellow, config.all_red);
+    fprintf(stderr, "[C-OK] Config loaded: ST=%d, LT=%d, Y=%d, AR=%d TH=%d MAX=%d LIM=%d\n",
+            config.green_st, config.green_lt, config.yellow, config.all_red, config.ext_threshold, 
+            config.max_ext, config.skip_limit);
 }
 
+/**
+ * @brief Handles CMD_ADD_VEHICLE: Pushes a new vehicle into the proper approach queue.
+ */
 void handle_add_vehicle() {
     PayloadAddVehicle payload;
     size_t read_count = fread(&payload, sizeof(PayloadAddVehicle), 1, stdin);
@@ -37,9 +58,19 @@ void handle_add_vehicle() {
         return;
     }
 
-    traffic_add_vehicle(&sys, payload.vehicle_id, payload.start_road, payload.end_road, payload.arrival_time);
+    bool success = traffic_add_vehicle(&sys, payload.vehicle_id, payload.start_road, payload.end_road, payload.arrival_time);
+    if (!success) {
+        fprintf(stderr, "[C-WARN] Failed to add vehicle %s (queue full or invalid direction)\n", 
+                payload.vehicle_id);
+    }
 }
 
+/**
+ * @brief Handles CMD_STEP: Advances FSM by one tick and transmits hardware state.
+ * * First sends the fixed 11-byte ResponseStep header. If any vehicles 
+ * passed through the intersection during this step, their 32-byte string IDs 
+ * are appended consecutively to the output stream.
+ */
 void handle_step() {
     char discharged_ids[ROAD_COUNT * LANES_PER_ROAD][VEHICLE_ID_LEN];
     memset(discharged_ids, 0, sizeof(discharged_ids));
@@ -64,8 +95,14 @@ void handle_step() {
     fflush(stdout);
 }
 
+/**
+ * @brief Main execution loop.
+ * Disables stream buffering to ensure smooth communication 
+ * and prevent pipeline deadlocks with the Python wrapper. Operates in 
+ * a blocking event loop reading from stdin.
+ */
 int main() {
-    // No buffer on input and output
+    // Disable buffering on stdin/stdout to prevent deadlocks over OS pipes.
     setvbuf(stdout, NULL, _IONBF, 0);
     setvbuf(stdin, NULL, _IONBF, 0);
 
@@ -73,6 +110,7 @@ int main() {
     traffic_init(&sys, default_config);
 
     CmdHeader header;
+    // Blocking read - waits for host command
     while (fread(&header, sizeof(CmdHeader), 1, stdin) == 1) {
         switch (header.cmd_type) {
             case CMD_CONFIG:
