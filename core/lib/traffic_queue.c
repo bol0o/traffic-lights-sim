@@ -1,3 +1,10 @@
+/**
+ * @file traffic_queue.c
+ * @brief Circular queue implementation for vehicle management at intersection
+ * 
+ * 11.02.26, Paweł Bolek
+ */
+
 #include "traffic_queue.h"
 
 void queue_init(VehicleQueue* q) {
@@ -28,7 +35,7 @@ bool queue_dequeue(VehicleQueue* q, char* out_id, uint32_t current_step, uint32_
     Vehicle* v = &q->vehicles[q->head];
 
     if (out_id) {
-        strcpy(out_id, v->id);
+        strncpy(out_id, v->id, VEHICLE_ID_LEN);
     }
 
     if (current_step >= v->arrival_step) {
