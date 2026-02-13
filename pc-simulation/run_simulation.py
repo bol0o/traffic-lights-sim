@@ -3,6 +3,8 @@ import struct
 import json
 import sys
 import os
+import time
+from typing import Any, Dict, Optional
 
 # Shares protocol.h structure
 CMD_CONFIG = 0
@@ -12,14 +14,17 @@ CMD_STOP = 99
 
 NORTH, EAST, SOUTH, WEST = 0, 1, 2, 3
 ROAD_MAP = {"north": 0, "east": 1, "south": 2, "west": 3}
-COLOR_MAP = {0: "🔴 RED", 1: "🟡 YELLOW", 2: "🟢 GREEN"}
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 CORE_DIR = os.path.dirname(SCRIPT_DIR)
 C_BINARY_PATH = os.path.join(CORE_DIR, 'core', 'bin', 'traffic_sim')
 
 class TrafficSimulator:
-    def __init__(self, config=None):
+    """
+    Manages the lifecycle and binary communication with the C FSM core.
+    """
+
+    def __init__(self, config: Optional[Dict[str, int]] = None):
         if not os.path.exists(C_BINARY_PATH):
             raise FileNotFoundError(f"Could not find '{C_BINARY_PATH}'. Did you run 'make'?")
 
@@ -34,31 +39,36 @@ class TrafficSimulator:
             self.send_config(config)
         else:
             default_config = {
-                'green_st': 6,
-                'green_lt': 5,
-                'yellow': 2,
-                'all_red': 3
+                'green_st': 4,
+                'green_lt': 3,
+                'yellow': 1,
+                'all_red': 3,
+                'ext_threshold': 1,
+                'max_ext': 15,
+                'skip_limit': 2
             }
             self.send_config(default_config)
             
         print(f"C simulator running (PID: {self.proc.pid})")
 
-    def send_config(self, config):
+    def send_config(self, config: Dict[str, int]) -> None:
         print(f" -> [PY] Sending config: ST={config['green_st']}s, LT={config['green_lt']}s, Y={config['yellow']}s, AR={config['all_red']}s")
         
         header = struct.pack('<B', CMD_CONFIG)
-        payload = struct.pack('<IIII', 
+        payload = struct.pack('<IIIIIII', 
                             config['green_st'],
                             config['green_lt'], 
                             config['yellow'],
-                            config['all_red'])
+                            config['all_red'],
+                            config['ext_threshold'],
+                            config['max_ext'],
+                            config['skip_limit'])
         
         self.proc.stdin.write(header + payload)
         self.proc.stdin.flush()
 
-    def add_vehicle(self, vehicle_id, start_road, end_road, arrival_time):
-        # print(f" -> [PY] Adding vehicle: {vehicle_id} ({start_road}->{end_road})")
-        
+    def add_vehicle(self, vehicle_id: str, start_road: str, end_road: str, arrival_time: int) -> None:
+        """Encodes vehicle data and pushes it to the MCU queues."""
         start_id = ROAD_MAP[start_road]
         end_id = ROAD_MAP[end_road]
         
@@ -68,16 +78,16 @@ class TrafficSimulator:
 
         # 2. Payload (ayloadAddVehicle struct)
         # '32s' = string 32 bytes
-        # 'B'   = unsigned char (start)
-        # 'B'   = unsigned char (end)
-        # 'I'   = unsigned int (4 bytes, time)
+        # 'B' = unsigned char (start)
+        # 'B' = unsigned char (end)
+        # 'I' = unsigned int (4 bytes, time)
         vehicle_id_bytes = vehicle_id.encode('utf-8')
         payload = struct.pack('<32sBBI', vehicle_id_bytes, start_id, end_id, arrival_time)
 
         self.proc.stdin.write(header + payload)
         self.proc.stdin.flush()
 
-    def step(self):
+    def step(self) -> Dict[str, Any]:
         self.proc.stdin.write(struct.pack('<B', CMD_STEP))
         self.proc.stdin.flush()
 
@@ -87,7 +97,7 @@ class TrafficSimulator:
         if not header_data:
             raise RuntimeError("C process did not respond")
 
-        step_idx, state, ns_st, ns_lt, ew_st, ew_lt, v_count = struct.unpack('<IBBBBBH', header_data)
+        step_idx, _, _, _, _, _, v_count = struct.unpack('<IBBBBBH', header_data)
         
         left_vehicles = []
         if v_count > 0:
@@ -96,26 +106,22 @@ class TrafficSimulator:
                 v_id = raw_ids[i*32 : (i+1)*32].decode('utf-8').strip('\x00')
                 left_vehicles.append(v_id)
 
-        # print(f"\n--- STEP {step_idx} | State ID: {state} ---")
-        # print(f"  NS Lights: Straight: {COLOR_MAP.get(ns_st)} | Left: {COLOR_MAP.get(ns_lt)}")
-        # print(f"  EW Lights: Straight: {COLOR_MAP.get(ew_st)} | Left: {COLOR_MAP.get(ew_lt)}")
-        
-        # if left_vehicles:
-        #     print(f"  LEAVING: {', '.join(left_vehicles)}")
-        
         return {"step": step_idx, "leftVehicles": left_vehicles}
 
-    def close(self):
-        print("Exiting simulation...")
+    def close(self) -> None:
+        """Gracefully terminates the C process, with a forced kill fallback."""
         try:
             self.proc.stdin.write(struct.pack('<B', CMD_STOP))
             self.proc.stdin.flush()
             self.proc.wait(timeout=1)
         except:
             self.proc.kill()
-        print("Done")
 
-def run_simulation(input_file, output_file, timing_params=0):
+def run_simulation(input_file: str, output_file: str, timing_params: Optional[Dict[str, int]] = None) -> Dict[str, float]:
+    """
+    Main execution loop. Parses the scenario, steps the FSM, 
+    calculates performance metrics, and dumps the output JSON.
+    """
     with open(input_file, 'r') as f:
         scenario = json.load(f)
 
@@ -140,7 +146,8 @@ def run_simulation(input_file, output_file, timing_params=0):
             
             for v_id in result["leftVehicles"]:
                 if v_id in arrival_times:
-                    wait_times.append(current_step - arrival_times[v_id])
+                    wait = current_step - arrival_times[v_id]
+                    wait_times.append(wait)
             
             output_data["stepStatuses"].append({"leftVehicles": result["leftVehicles"]})
 
@@ -152,12 +159,15 @@ def run_simulation(input_file, output_file, timing_params=0):
     if wait_times:
         avg_wait = sum(wait_times) / len(wait_times)
         max_wait = max(wait_times)
-        print(f"\n --- PERFORMANCE METRICS ---")
+        print("\n --- PERFORMANCE METRICS ---")
         print(f"   Avg Wait Time: {avg_wait:.2f} steps")
         print(f"   Max Wait Time: {max_wait} steps")
         print(f"   Throughput:    {len(wait_times)} vehicles")
+    else:
+        print("\n --- PERFORMANCE METRICS ---")
+        print("   No vehicles processed.")
     
-    print(f"\nSimulation finished. Output saved to {output_file}")
+    print(f"\n[PY] Simulation finished. Output saved to {output_file}")
     
     metrics = {
         'avg_wait': sum(wait_times) / len(wait_times) if wait_times else 0,
