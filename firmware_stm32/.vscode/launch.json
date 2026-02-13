@@ -1,0 +1,21 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug PDB (STM32G0)",
+            "type": "cortex-debug",
+            "request": "launch",
+            "servertype": "openocd",
+            "cwd": "${workspaceRoot}",
+            "executable": "${command:cmake.launchTargetPath}",
+            "device": "STM32G0B1CBT6",
+            "configFiles": [
+                "interface/stlink.cfg",
+                "target/stm32g0x.cfg"
+            ],
+            "runToEntryPoint": "main",
+            "showDevDebugOutput": "none",
+            "svdFile": "${workspaceRoot}/STM32G0B1.svd"
+        }
+    ]
+}

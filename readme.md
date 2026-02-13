@@ -1,5 +1,59 @@
 # Traffic Lights Simulation
 
+## Setup
+
+**Prerequisites**
+
+- GCC Compiler (for C core)
+- Python 3.x
+- Make
+- Numpy (if running optimization algorithm)
+
+**Building and running**
+
+1. **Compile C code**:
+```bash
+cd core
+make
+```
+
+You can also run `make test` to run tests.
+
+2. **Run simulation:**
+
+The simulation requires an input JSON file and an output path.
+You can use `python3 optimize_timings.py` to generate test scenarios.
+
+```bash
+python3 pc-simulation/run_simulation.py input.json output.json
+```
+3. **(Optional) Run Optimizer / Benchmarks**
+```bash
+python3 pc-simulation/optimize_timings.py --optimize
+```
+## Project Structure
+
+```text
+├── assets/                     # Media for README
+├── core/                       # Traffic Lights Simulation
+│   ├── bin/                    # Compiled PC binaries
+│   ├── lib/                    # Queue logic
+│   ├── tests/                  # C unit tests
+│   ├── main_pc.c               # Entry point for PC-based simulation
+│   ├── makefile                # Build system for the PC executable
+│   ├── protocol.h              # Shared protocol definiton
+│   ├── traffic_fsm.c           # FSM implementation
+│   └── traffic_fsm.h
+├── firmware_stm32/             # STM32 project
+│   └── ...
+├── optimization_results/       # Results from algorithm optimizations
+├── pc-simulation/              # Python Wrappers & Tools
+│   ├── optimize_timings.py     # Parameter grid-search and cost optimization script
+│   └── run_simulation.py       # Master controller
+├── .gitignore                  
+└── README.md
+```
+
 ## Design assumptions
 
 - **Right hand traffic**: The routing and lane logic are designed based on standard right-hand traffic rules.
@@ -68,9 +122,9 @@ I tested 9 traffic patterns:
 - left_heavy: 70% left-turn bias
 
 **3 jam scenarios**
-- heavy rush: 
-- left turn jam:
-- all directions jam:
+- extreme_rush: Heavy N-S congestion testing the starvation limits of cross-traffic
+- left_turn_jam: Overwhelming amount of left-turning vehicles
+- all_directions_jam: Saturated intersection on all lanes
 
 The optimizer performs a grid search across the parameter space:
 
@@ -152,32 +206,27 @@ Instead of long, fixed green phases, the algorithm proved that a short cycle and
 3. **Ghost Traffic Mitigation (V2 & V3):** 
 While Phase Skipping (V2) only provided a 3% improvement on its own, it became powerful when combined with Green Extensions (V3). Skipping empty roads saves time, which is then dynamically reallocated to busy roads via extensions.
 
-## Setup
+## STM32 Demo
 
-**Prerequisites**
+![demo gif](./assets/demo.gif)
 
-- GCC Compiler (for C core)
-- Python 3.x
-- Make
-- Numpy (if running optimization algorithm)
+This demo shows an STM32 Nucleo-G0B1RE microcontroller running the algorithm and displaying the real-time intersection state on a breadboard.
 
-**Building and running**
+**How it works**
 
-1. **Compile C code**:
-```bash
-cd core
-make
-```
+1. Python reads the input.json file and acts as the master controller.
+2. Encodes the simulation steps into binary structs and streams them via UART to the STM32.
+3. The STM32 receives the payload, processes the FSM step, and updates the physical GPIOs using the STM32 HAL library.
+4. The microcontroller sends a binary response back to the Python, containing the intersection state and IDs of vehicles that successfully left the queue.
 
-2. **Run a simulation:**
+*Note: The Python wrapper for the hardware simulation is almost identical to the PC-based simulation thanks to the shared protocol.h. The only difference is swapping standard I/O pipes for a Serial COM port access.*
 
-The simulation requires an input JSON file and an output path.
-You can use `python3 optimize_timings.py` to generate test scenarios.
+**Hardware Mapping**
 
-```bash
-python3 pc-simulation/run_simulation.py input.json output.json
-```
-3. **Run Optimizer / Benchmarks**
-```bash
-python3 pc-simulation/optimize_timings.py --optimize
-```
+To represent the 2-lane intersection logic on a limited hardware setup, the logic was mapped as follows:
+RGB LEDs Represent the active light for a given direction. Because the FSM tracks Straight and Left turns independently - green illuminates for main green and permissive green.
+
+Blue/Orange LEDs (Queue length): Act as a real-time visualization of the queues.
+- 1 LED ON = Queue has at least 1 vehicle.
+- 2 LEDs ON = Queue has 2 or more vehicles waiting.
+

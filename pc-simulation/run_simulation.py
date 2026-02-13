@@ -3,7 +3,6 @@ import struct
 import json
 import sys
 import os
-import time
 from typing import Any, Dict, Optional
 
 # Shares protocol.h structure
