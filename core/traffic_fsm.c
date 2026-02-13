@@ -25,8 +25,6 @@ static const StateTransition STATE_TRANSITIONS[] = {
     {STATE_EW_LEFT_YELLOW,     STATE_ALL_RED,            TIMING_YELLOW},
 };
 
-#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
-
 static inline bool is_left_turn(Direction start, Direction end) {
     return ((end - start + DIRECTION_MOD) % DIRECTION_MOD) == LEFT_TURN_DIFF;
 }
@@ -45,6 +43,73 @@ static void set_lights_for_state(TrafficSystem* sys) {
             return;
         }
     }
+}
+
+static TrafficState find_state_after_yellow(TrafficState skipped_green) {
+    TrafficState yellow_state = STATE_ALL_RED;
+    TrafficState next_meaningful_state = STATE_ALL_RED;
+
+    for (uint_fast8_t i = 0; i < ARRAY_SIZE(STATE_TRANSITIONS); i++) {
+        if (STATE_TRANSITIONS[i].current == skipped_green) {
+            yellow_state = STATE_TRANSITIONS[i].next;
+            break;
+        }
+    }
+
+    for (uint_fast8_t i = 0; i < ARRAY_SIZE(STATE_TRANSITIONS); i++) {
+        if (STATE_TRANSITIONS[i].current == yellow_state) {
+            next_meaningful_state = STATE_TRANSITIONS[i].next;
+            break;
+        }
+    }
+
+    return next_meaningful_state;
+}
+
+static int get_phase_idx(TrafficState state) {
+    if (state == STATE_NS_STRAIGHT) return 0;
+    if (state == STATE_NS_LEFT)     return 1;
+    if (state == STATE_EW_STRAIGHT) return 2;
+    if (state == STATE_EW_LEFT)     return 3;
+    return -1;
+}
+
+static bool is_phase_empty(const TrafficSystem* sys, TrafficState state) {
+    switch (state) {
+        case STATE_NS_STRAIGHT:
+            return queue_is_empty(&sys->queues[NORTH][LANE_STRAIGHT_RIGHT]) && 
+                   queue_is_empty(&sys->queues[SOUTH][LANE_STRAIGHT_RIGHT]);
+        
+        case STATE_NS_LEFT:
+            return queue_is_empty(&sys->queues[NORTH][LANE_LEFT]) && 
+                   queue_is_empty(&sys->queues[SOUTH][LANE_LEFT]);
+        
+        case STATE_EW_STRAIGHT:
+            return queue_is_empty(&sys->queues[EAST][LANE_STRAIGHT_RIGHT]) && 
+                   queue_is_empty(&sys->queues[WEST][LANE_STRAIGHT_RIGHT]);
+        
+        case STATE_EW_LEFT:
+            return queue_is_empty(&sys->queues[EAST][LANE_LEFT]) && 
+                   queue_is_empty(&sys->queues[WEST][LANE_LEFT]);
+        
+        default:
+            return false;
+    }
+}
+
+static bool should_actually_skip(TrafficSystem* sys, TrafficState state) {
+    int idx = get_phase_idx(state);
+    if (idx == -1) return false;
+
+    bool empty = is_phase_empty(sys, state);
+
+    if (empty && sys->phase_skip_counters[idx] < MAX_SKIP_CYCLES) {
+        sys->phase_skip_counters[idx]++;
+        return true;
+    }
+
+    sys->phase_skip_counters[idx] = 0;
+    return false;
 }
 
 static uint8_t process_discharges(TrafficSystem* sys, char out_ids[][VEHICLE_ID_LEN]) {
@@ -68,19 +133,38 @@ static uint8_t process_discharges(TrafficSystem* sys, char out_ids[][VEHICLE_ID_
     return discharged;
 }
 
-static TrafficState get_next_state(const TrafficSystem* sys) {
+static TrafficState get_next_state(TrafficSystem* sys) {
     const uint32_t* timings = (const uint32_t*)&sys->timing;
     
     for (uint_fast8_t i = 0; i < ARRAY_SIZE(STATE_TRANSITIONS); i++) {
-        uint32_t timeout = timings[STATE_TRANSITIONS[i].timing_idx];
-        
         if (sys->current_state == STATE_TRANSITIONS[i].current &&
-            sys->state_timer >= timeout) {
-            return STATE_TRANSITIONS[i].next;
+            sys->state_timer >= timings[STATE_TRANSITIONS[i].timing_idx]) {
+            
+            TrafficState next = STATE_TRANSITIONS[i].next;
+
+            if (should_actually_skip(sys, next)) {
+                return find_state_after_yellow(next); 
+            }
+            
+            return next;
         }
     }
     return sys->current_state;
 }
+
+static bool should_extend_current_phase(const TrafficSystem* sys) {
+    for (uint_fast8_t road = 0; road < ROAD_COUNT; road++) {
+        for (uint_fast8_t lane = 0; lane < LANES_PER_ROAD; lane++) {
+            if (sys->lights[road][lane] == LIGHT_GREEN) {
+                if (queue_count(&sys->queues[road][lane]) >= EXTENSION_THRESHOLD) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 
 void traffic_init(TrafficSystem* sys, TimingConfig config) {
     if (!sys) return;
@@ -118,9 +202,20 @@ uint8_t traffic_fsm_step(TrafficSystem* sys, char out_ids[][VEHICLE_ID_LEN]) {
     
     TrafficState next_state = get_next_state(sys);
     
+    if (next_state != sys->current_state && 
+        (sys->current_state == STATE_NS_STRAIGHT || sys->current_state == STATE_NS_LEFT ||
+         sys->current_state == STATE_EW_STRAIGHT || sys->current_state == STATE_EW_LEFT)) {
+        
+        if (should_extend_current_phase(sys) && sys->extension_timer < MAX_GREEN_EXTENSION) {
+            sys->extension_timer++;
+            next_state = sys->current_state; 
+        }
+    }
+    
     if (next_state != sys->current_state) {
         sys->current_state = next_state;
         sys->state_timer = 0;
+        sys->extension_timer = 0;
     }
     
     set_lights_for_state(sys);
@@ -131,6 +226,6 @@ uint16_t traffic_get_queue_size(const TrafficSystem* sys, Direction road, uint8_
     if (!sys || road >= ROAD_COUNT || lane >= LANES_PER_ROAD) {
         return 0;
     }
-    
+
     return queue_count(&sys->queues[road][lane]);
 }

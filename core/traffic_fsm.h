@@ -16,6 +16,13 @@
 
 #define DEFAULT_TIMING {10, 5, 2, 3}
 
+#define MAX_SKIP_CYCLES 2 
+
+#define EXTENSION_THRESHOLD 3
+#define MAX_GREEN_EXTENSION 10
+
+#define ARRAY_SIZE(arr) (sizeof(arr) / sizeof((arr)[0]))
+
 typedef struct {
     uint32_t green_st;
     uint32_t green_lt;
@@ -83,6 +90,9 @@ typedef struct {
     VehicleQueue queues[ROAD_COUNT][LANES_PER_ROAD];
 
     LightColor lights[ROAD_COUNT][LANES_PER_ROAD];
+
+    uint8_t phase_skip_counters[4];
+    uint32_t extension_timer;
 } TrafficSystem;
 
 void traffic_init(TrafficSystem* sys, TimingConfig config);
